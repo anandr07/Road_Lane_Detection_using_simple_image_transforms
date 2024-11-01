@@ -1,1 +1,1 @@
-# Road Lane Detection without using CNN
+# Road Lane Detection using simple image transforms
