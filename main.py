@@ -1,438 +1,303 @@
-# %%
-#importing some useful packages
+#%%
+import os
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import numpy as np
 import cv2
-# %matplotlib inline
-
-#reading in an image
-image = mpimg.imread('test_images/solidWhiteRight.jpg')
-
-#printing out some stats and plotting
-print('This image is:', type(image), 'with dimensions:', image.shape)
-plt.imshow(image)  # if you wanted to show a single color channel image called 'gray', for example, call as plt.imshow(gray, cmap='gray')
-
-#reading in an image
-image = mpimg.imread('test_images/solidWhiteRight.jpg')
-
-#printing out some stats and plotting
-print('This image is:', type(image), 'with dimensions:', image.shape)
-plt.imshow(image)  # if you wanted to show a single color channel image called 'gray', for example, call as plt.imshow(gray, cmap='gray')
-
+from moviepy.editor import VideoFileClip
+import collections
 import math
 
+# Ensure output directory exists
+output_dir = "test_videos_output"
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+
+# Function to convert an image to grayscale
 def grayscale(img):
-    """Applies the Grayscale transform
-    This will return an image with only one color channel
-    but NOTE: to see the returned image as grayscale
-    (assuming your grayscaled image is called 'gray')
-    you should call plt.imshow(gray, cmap='gray')"""
-    return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    # Or use BGR2GRAY if you read an image with cv2.imread()
-    # return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    """
+    Converts an RGB image to grayscale.
     
+    Args:
+    img (numpy.ndarray): The input RGB image.
+
+    Returns:
+    numpy.ndarray: Grayscale version of the input image.
+    """
+    return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+
+# Function to detect edges using Canny edge detection
 def canny(img, low_threshold=50, high_threshold=150):
-    """Applies the Canny transform"""
+    """
+    Applies Canny edge detection to an image.
+    
+    Args:
+    img (numpy.ndarray): Grayscale or single-channel image.
+    low_threshold (int): Lower bound for the hysteresis thresholding.
+    high_threshold (int): Upper bound for the hysteresis thresholding.
+
+    Returns:
+    numpy.ndarray: Image with edges detected.
+    """
     return cv2.Canny(img, low_threshold, high_threshold)
 
+# Function to apply Gaussian blur to an image
 def gaussian_blur(img, kernel_size=15):
-    """Applies a Gaussian Noise kernel"""
+    """
+    Reduces image noise using a Gaussian blur.
+    
+    Args:
+    img (numpy.ndarray): Input image.
+    kernel_size (int): Size of the Gaussian kernel. Must be an odd number.
+
+    Returns:
+    numpy.ndarray: Blurred image.
+    """
     return cv2.GaussianBlur(img, (kernel_size, kernel_size), 0)
 
+# Function to mask the region of interest in an image
 def region_of_interest(img, vertices):
     """
-    Applies an image mask.
+    Applies a mask to keep only the region of the image defined by vertices.
     
-    Only keeps the region of the image defined by the polygon
-    formed from `vertices`. The rest of the image is set to black.
-    `vertices` should be a numpy array of integer points.
+    Args:
+    img (numpy.ndarray): Input image.
+    vertices (numpy.ndarray): Array of vertices defining the polygonal mask.
+
+    Returns:
+    numpy.ndarray: Masked image with only the region of interest retained.
     """
-    #defining a blank mask to start with
-    mask = np.zeros_like(img)   
-    
-    #defining a 3 channel or 1 channel color to fill the mask with depending on the input image
+    mask = np.zeros_like(img)
     if len(img.shape) > 2:
-        channel_count = img.shape[2]  # i.e. 3 or 4 depending on your image
+        channel_count = img.shape[2]
         ignore_mask_color = (255,) * channel_count
     else:
         ignore_mask_color = 255
-        
-    #filling pixels inside the polygon defined by "vertices" with the fill color    
     cv2.fillPoly(mask, vertices, ignore_mask_color)
-    
-    #returning the image only where mask pixels are nonzero
-    masked_image = cv2.bitwise_and(img, mask)
-    return masked_image
+    return cv2.bitwise_and(img, mask)
 
-
+# Function to draw lines on an image
 def draw_lines(img, lines, color=[255, 0, 0], thickness=2):
     """
-    NOTE: this is the function you might want to use as a starting point once you want to
-    average/extrapolate the line segments you detect to map out the full
-    extent of the lane (going from the result shown in raw-lines-example.mp4
-    to that shown in P1_example.mp4).
-
-    Think about things like separating line segments by their
-    slope ((y2-y1)/(x2-x1)) to decide which segments are part of the left
-    line vs. the right line.  Then, you can average the position of each of
-    the lines and extrapolate to the top and bottom of the lane.
-
-    This function draws `lines` with `color` and `thickness`.
-    Lines are drawn on the image inplace (mutates the image).
-    If you want to make the lines semi-transparent, think about combining
-    this function with the weighted_img() function below
+    Draws lines on an image.
+    
+    Args:
+    img (numpy.ndarray): Image to draw lines on.
+    lines (list): List of lines, where each line is represented by (x1, y1, x2, y2).
+    color (list): Color of the lines in RGB.
+    thickness (int): Thickness of the lines.
     """
     for line in lines:
         for x1, y1, x2, y2 in line:
             cv2.line(img, (x1, y1), (x2, y2), color, thickness)
 
-
+# Function to detect lines using Hough Line Transformation
 def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap):
     """
-    `img` should be the output of a Canny transform.
+    Uses Hough Transformation to detect lines in an image.
+    
+    Args:
+    img (numpy.ndarray): Edge-detected image.
+    rho (float): Distance resolution in pixels.
+    theta (float): Angle resolution in radians.
+    threshold (int): Minimum number of intersections needed to detect a line.
+    min_line_len (int): Minimum number of pixels in a line.
+    max_line_gap (int): Maximum gap between pixels to connect them as a line.
 
-    Returns hough lines.
+    Returns:
+    numpy.ndarray: Array of detected lines.
     """
-    return cv2.HoughLinesP(img, rho, theta, threshold, np.array([]), minLineLength=min_line_len,
-                            maxLineGap=max_line_gap)
+    return cv2.HoughLinesP(img, rho, theta, threshold, np.array([]), minLineLength=min_line_len, maxLineGap=max_line_gap)
 
-
+# Function to overlay one image on top of another with specific weights
 def weighted_img(img, initial_img, α=0.8, β=1., γ=0.):
     """
-    `img` is the output of the hough_lines(), An image with lines drawn on it.
-    Should be a blank image (all black) with lines drawn on it.
+    Combines two images using weighted addition.
+    
+    Args:
+    img (numpy.ndarray): Image with lines drawn on it.
+    initial_img (numpy.ndarray): Original image before line detection.
+    α (float): Weight for the initial image.
+    β (float): Weight for the image with lines.
+    γ (float): Scalar added to each pixel in the output.
 
-    `initial_img` should be the image before any processing.
-
-    The result image is computed as follows:
-
-    initial_img * α + img * β + γ
-    NOTE: initial_img and img must be the same shape!
+    Returns:
+    numpy.ndarray: Combined image.
     """
     return cv2.addWeighted(initial_img, α, img, β, γ)
 
-# test helper function for experimenting with complete set of images
-def load_images(folder):
-    images = []
-    for filename in os.listdir(folder):
-        img = mpimg.imread(os.path.join(folder, filename))
-        if img is not None:
-            images.append((img, filename, False))
-    return images
-
-
-def show_images(images, cols, figure_size=(10, 10)):
-    rows = math.ceil(len(images)/cols)
-    fix, ax = plt.subplots(rows, cols, figsize=figure_size)
-
-    img_cnt = 0
-    img_length = len(images)
-    for i in range(rows):
-        for j in range(cols):
-            image, title, show_gray = images[img_cnt]
-            if (rows > 1):
-                ax[i][j].set_title(title, fontsize=10)
-                if show_gray:
-                    ax[i][j].imshow(image, cmap='gray')
-                else:
-                    ax[i][j].imshow(image)
-            else:
-                ax[j].set_title(title, fontsize=10)
-                if show_gray:
-                    ax[j].imshow(image, cmap='gray')
-                else:
-                    ax[j].imshow(image)
-            img_cnt = img_cnt + 1
-            if img_cnt >= img_length:
-                break
-        if img_cnt >= img_length:
-            break
-    plt.tight_layout()
-    plt.show()
-
-
-def get_changed_images(images, modifier, image_name, show_as_gray):
-    changed_images = []
-    for image, name, _ in images:
-        changed_image = modifier(image)
-        changed_images.append((changed_image, image_name, show_as_gray))
-    return changed_images
-
-
-# lane detection methods
-
-def mask_white_yellow_rgb(image):
-    # white
-    lower = np.uint8([200, 200, 200])
-    upper = np.uint8([255, 255, 255])
-    white_mask = cv2.inRange(image, lower, upper)
-    # yellow
-    lower = np.uint8([190, 190, 0])
-    upper = np.uint8([255, 255, 255])
-    yellow_mask = cv2.inRange(image, lower, upper)
-    # combine
-    mask = cv2.bitwise_or(white_mask, yellow_mask)
-    return cv2.bitwise_and(image, image, mask=mask)
-
-
+# Function to create a mask for white and yellow lane lines in HLS color space
 def mask_white_yellow_hls(image):
+    """
+    Filters the image to isolate white and yellow colors for lane detection.
+    
+    Args:
+    image (numpy.ndarray): Input RGB image.
+
+    Returns:
+    numpy.ndarray: Image with only white and yellow colors.
+    """
     converted = cv2.cvtColor(image, cv2.COLOR_RGB2HLS)
-    # white
-    lower = np.uint8([0, 200, 0])
-    upper = np.uint8([255, 255, 255])
-    white_mask = cv2.inRange(converted, lower, upper)
-    # yellow
-    lower = np.uint8([10, 0, 100])
-    upper = np.uint8([40, 255, 255])
-    yellow_mask = cv2.inRange(converted, lower, upper)
-    # combine
+    # Define color range for white and yellow in HLS space
+    lower_white = np.uint8([0, 200, 0])
+    upper_white = np.uint8([255, 255, 255])
+    white_mask = cv2.inRange(converted, lower_white, upper_white)
+    lower_yellow = np.uint8([10, 0, 100])
+    upper_yellow = np.uint8([40, 255, 255])
+    yellow_mask = cv2.inRange(converted, lower_yellow, upper_yellow)
     mask = cv2.bitwise_or(white_mask, yellow_mask)
     return cv2.bitwise_and(image, image, mask=mask)
 
-
-def get_region_masked_images(images, imshape, row_top, bottom_col_left, top_col_left, top_col_right):
-    region_images = []
-
-    bottom_left = [bottom_col_left, imshape[0]]
-    top_left = [top_col_left, row_top]
-    bottom_right = [imshape[1], imshape[0]]
-    top_right = [top_col_right, row_top]
-    vertices = np.array([[bottom_left, top_left, top_right, bottom_right]], dtype=np.int32)
-
-    for image, name, _ in images:
-        masked = region_of_interest(image, vertices)
-        name = "region_masked"
-        region_images.append((masked, name, True))
-    return region_images
-
-
-def get_hough_lines_all(images):
-    lines = []
-    for image, name, _ in images:
-        line = hough_lines(image, 1, np.pi/180, 20, 20, 300)
-        lines.append(line)
-    return lines
-
-
-def get_hough_lines_images(original_images, canny_images, lines_all):
-    hough_lines_images = []
-    cnt = 0
-    for image, name, _ in canny_images:
-        orig_copy = np.copy(original_images[cnt][0])
-        draw_lines(orig_copy, lines_all[0], thickness=1)
-        name = 'hough_lines'
-        hough_lines_images.append((orig_copy, name, False))
-    return hough_lines_images
-
-
-def get_lane_lines_all(images, lines_all, row_top):
-    lane_lines_all = []
-    cnt = 0
-    for image, name, _ in images:
-        lane_lines = get_lane_lines(image.shape, lines_all[cnt], row_top)
-        lane_lines_all.append(lane_lines)
-        cnt = cnt + 1
-    return lane_lines_all
-
-
-def get_images_with_lane_lines(images, lane_lines_all):
-    results = []
-    cnt = 0
-    for image, name, _ in images:
-        result = get_lane_lines_image(image, lane_lines_all[cnt])
-        results.append((result, "result", False))
-    return results
-
+# Function to average detected lane line segments
 def average_lanes(lines):
-    left_lines = []
-    left_length = []
-    right_lines = []
-    right_length = []
+    """
+    Calculates the average position and slope of detected left and right lane lines.
+    
+    Args:
+    lines (list): List of line segments represented by (x1, y1, x2, y2).
 
+    Returns:
+    tuple: Averaged left and right lanes in the form of (slope, intercept).
+    """
+    left_lines, left_length, right_lines, right_length = [], [], [], []
     for line in lines:
         for col1, row1, col2, row2 in line:
             if col2 == col1:
-                continue  # skip if it is a vertical line
+                continue  # Skip vertical lines
             slope = (row2 - row1) / (col2 - col1)
             intercept = row1 - slope * col1
             length = np.sqrt((row2 - row1) ** 2 + (col2 - col1) ** 2)
-            if slope < 0:  # y is reversed in a matplotlib image
+            if slope < 0:
                 left_lines.append((slope, intercept))
-                left_length.append((length))
+                left_length.append(length)
             else:
                 right_lines.append((slope, intercept))
-                right_length.append((length))
-
-    left_lane = None
-    right_lane = None
-
-    # prefer longer lines
+                right_length.append(length)
+    left_lane, right_lane = None, None
     if len(left_length) > 0:
         left_lane = np.dot(left_length, left_lines) / np.sum(left_length)
-
     if len(right_length) > 0:
         right_lane = np.dot(right_length, right_lines) / np.sum(right_length)
-
-    #(slope,intercept), (slope,intercept)
     return left_lane, right_lane
 
-
+# Function to get the coordinates of lane lines based on slope and intercept
 def get_points(row_bottom, row_top, line):
+    """
+    Calculates the x-coordinates for given y-coordinates using the line's slope and intercept.
+    
+    Args:
+    row_bottom (int): Y-coordinate for the bottom of the lane.
+    row_top (int): Y-coordinate for the top of the lane.
+    line (tuple): Slope and intercept of the line.
+
+    Returns:
+    tuple: Bottom and top points of the lane line.
+    """
     if line is None:
         return None
-
     slope, intercept = line
-
     col_bottom = int((row_bottom - intercept) / slope)
     col_top = int((row_top - intercept) / slope)
-
     return ((col_bottom, int(row_bottom)), (col_top, int(row_top)))
 
-
+# Function to detect and return left and right lane lines
 def get_lane_lines(imshape, lines, row_top):
-    left_lane, right_lane = average_lanes(lines)
+    """
+    Extracts the left and right lane lines based on averaged line segments.
+    
+    Args:
+    imshape (tuple): Shape of the image (height, width).
+    lines (list): Detected lines from Hough Transformation.
+    row_top (int): Top y-coordinate for lane lines.
 
+    Returns:
+    tuple: Coordinates of left and right lane lines.
+    """
+    left_lane, right_lane = average_lanes(lines)
     left_line = get_points(imshape[0], row_top, left_lane)
     right_line = get_points(imshape[0], row_top, right_lane)
-
     return left_line, right_line
 
-
-def get_lane_lines_image(image, lines, color= [255, 0, 0], thickness=20):
+# Function to overlay detected lane lines on the original image
+def get_lane_lines_image(image, lines, color=[255, 0, 0], thickness=20):
+    """
+    Draws the detected lane lines onto an image.
     
-    # create a new image to draw lines
+    Args:
+    image (numpy.ndarray): Original image.
+    lines (tuple): Left and right lane lines.
+    color (list): RGB color of the lane lines.
+    thickness (int): Thickness of lane lines.
+
+    Returns:
+    numpy.ndarray: Image with lane lines drawn.
+    """
     line_image = np.zeros_like(image)
     for line in lines:
         if line is not None:
             cv2.line(line_image, line[0], line[1], color, thickness)
     return cv2.addWeighted(image, 1.0, line_image, 0.95, 0.0)
 
-# TODO: Build your pipeline that will draw lane lines on the test_images
-# then save them to the test_images_output directory.
-images_folder = 'test_images'
-images = load_images(images_folder)
-
-images_to_show = []
-images_to_show.append(images[0])
-#show_images(images, 2)
-
-hls_masked_images = get_changed_images(images, mask_white_yellow_hls, 'hls_masked', False)
-images_to_show.append(hls_masked_images[0])
-
-gray_images = get_changed_images(hls_masked_images, grayscale, "gray", True)
-images_to_show.append(gray_images[0])
-
-blur_images = get_changed_images(gray_images, gaussian_blur, "blur", True)
-images_to_show.append(blur_images[0])
-
-canny_images = get_changed_images(blur_images, canny, "canny_edges", True)
-images_to_show.append(canny_images[0])
-
-row_top = 330
-bottom_col_left = 100
-top_col_left = 450
-top_col_right = 560
-
-region_masked_images = get_region_masked_images(canny_images, images[0][0].shape, row_top, bottom_col_left, top_col_left, top_col_right)
-images_to_show.append(region_masked_images[0])
-
-hough_lines_all = get_hough_lines_all(region_masked_images)
-
-h_images = get_hough_lines_images(images, region_masked_images, hough_lines_all)
-images_to_show.append(h_images[0])
-
-lane_lines_all = get_lane_lines_all(images, hough_lines_all, row_top)
-results = get_images_with_lane_lines(images, lane_lines_all)
-images_to_show.append(results[0])
-
-show_images(images_to_show, 2)
-
-# Import everything needed to edit/save/watch video clips
-from moviepy.editor import VideoFileClip
-from IPython.display import HTML
-
-import collections
-
+# Variables to average lines over frames
 QUEUE_MAX_LEN = 50
-
-left_lines  = collections.deque(maxlen=QUEUE_MAX_LEN)
+left_lines = collections.deque(maxlen=QUEUE_MAX_LEN)
 right_lines = collections.deque(maxlen=QUEUE_MAX_LEN)
 
+# Function to calculate average line positions across frames
 def get_average_line(line, lines):
+    """
+    Averages line positions over multiple frames for smoother lane line display.
+    
+    Args:
+    line (tuple): New line coordinates.
+    lines (collections.deque): Deque of previous line positions.
+
+    Returns:
+    tuple: Averaged line coordinates.
+    """
     if line is not None:
         lines.append(line)
-
-    if len(lines)>0:
+    if len(lines) > 0:
         line = np.mean(lines, axis=0, dtype=np.int32)
         line = tuple(map(tuple, line))
     return line
-        
-def process_image(image):
-    # test videos 1, 2
-    row_top = 330
-    bottom_col_left = 100
-    top_col_left = 450
-    top_col_right = 560
-    
-    # challenge video
-    #row_top = 430
-    #bottom_col_left = 100
-    #top_col_left = 500
-    #top_col_right = 800
 
+# Main function to process each frame for lane detection
+def process_image(image):
+    """
+    Processes an image to detect lane lines.
+    
+    Args:
+    image (numpy.ndarray): Input RGB image.
+
+    Returns:
+    numpy.ndarray: Image with detected lane lines overlayed.
+    """
+    row_top = 330
+    bottom_col_left, top_col_left, top_col_right = 100, 450, 560
     bottom_left = [bottom_col_left, image.shape[0]]
     top_left = [top_col_left, row_top]
     bottom_right = [image.shape[1], image.shape[0]]
     top_right = [top_col_right, row_top]
-
     hls_masked_image = mask_white_yellow_hls(image)
     gray = grayscale(hls_masked_image)
     blur_gray = gaussian_blur(gray, 15)
     edges = canny(blur_gray, 50, 150)
-
     vertices = np.array([[bottom_left, top_left, top_right, bottom_right]], dtype=np.int32)
     masked_edges = region_of_interest(edges, vertices)
-
-    rho = 1  # distance resolution in pixels of the Hough grid
-    theta = np.pi / 180  # angular resolution in radians of the Hough grid
-    threshold = 1  # minimum number of votes (intersections in Hough grid cell)
-    min_line_length = 5  # minimum number of pixels making up a line
-    max_line_gap = 1  # maximum gap in pixels between connectable line segments
-
-    h_lines = hough_lines(masked_edges, rho, theta, threshold, min_line_length, max_line_gap)
+    h_lines = hough_lines(masked_edges, 1, np.pi / 180, 1, 5, 1)
     lane_lines = get_lane_lines(image.shape, h_lines, row_top)
-
     left_line = get_average_line(lane_lines[0], left_lines)
     right_line = get_average_line(lane_lines[1], right_lines)
-    result = get_lane_lines_image(image, (left_line, right_line))
-    return result
+    return get_lane_lines_image(image, (left_line, right_line))
 
-white_output = 'test_videos_output/solidWhiteRight.mp4'
-## To speed up the testing process you may want to try your pipeline on a shorter subclip of the video
-## To do so add .subclip(start_second,end_second) to the end of the line below
-## Where start_second and end_second are integer values representing the start and end of the subclip
-## You may also uncomment the following line for a subclip of the first 5 seconds
-##clip1 = VideoFileClip("test_videos/solidWhiteRight.mp4").subclip(0,5)
+# Process videos
+white_output = os.path.join(output_dir, 'solidWhiteRight.mp4')
 clip1 = VideoFileClip("test_videos/solidWhiteRight.mp4")
-white_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
-# %time white_clip.write_videofile(white_output, audio=False)
+white_clip = clip1.fl_image(process_image)
+white_clip.write_videofile(white_output, audio=False)
 
-HTML("""
-<video width="960" height="540" controls>
-  <source src="{0}">
-</video>
-""".format(white_output))
-
-yellow_output = 'test_videos_output/solidYellowLeft.mp4'
-## To speed up the testing process you may want to try your pipeline on a shorter subclip of the video
-## To do so add .subclip(start_second,end_second) to the end of the line below
-## Where start_second and end_second are integer values representing the start and end of the subclip
-## You may also uncomment the following line for a subclip of the first 5 seconds
-##clip2 = VideoFileClip('test_videos/solidYellowLeft.mp4').subclip(0,5)
-clip2 = VideoFileClip('test_videos/solidYellowLeft.mp4')
+yellow_output = os.path.join(output_dir, 'solidYellowLeft.mp4')
+clip2 = VideoFileClip("test_videos/solidYellowLeft.mp4")
 yellow_clip = clip2.fl_image(process_image)
-# %time yellow_clip.write_videofile(yellow_output, audio=False)
-
-
-# %%
+yellow_clip.write_videofile(yellow_output, audio=False)
